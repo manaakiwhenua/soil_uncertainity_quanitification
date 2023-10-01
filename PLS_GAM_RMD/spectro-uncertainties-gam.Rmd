@@ -1,0 +1,2143 @@
+---
+title: "PLS-GAM uncertainties"
+author: "P. Roudier"
+date: '2022-08-01'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  cache = TRUE,
+  warning = FALSE,
+  fig.width = 12,
+  fig.height = 10
+)
+set.seed(1)
+```
+
+```{r libs, cache=FALSE, message=FALSE, warning=FALSE, results='hide'}
+library(dplyr)
+library(magrittr)
+library(prospectr)
+library(tibble)
+library(spectacles)
+library(stringr)
+library(pls)
+library(mgcv)
+#library(INLA)
+library(inlabru)
+library(ggplot2)
+library(caret)
+library(patchwork)
+library(boot)
+library(parallel)
+
+```
+
+
+```{r load_data, cache=FALSE}
+
+#define pls parent directory
+project_dir="C:/Projects/ResearchProjects/Research-SoilSpectroscopy"
+pls_model_dir= file.path(project_dir,"Smap/Models/PLS")
+pls_bs_model_dir= file.path(project_dir,"Smap/Models/PLS-BS")
+gam_model_dir=  file.path(project_dir,"Smap/Models/GAM")
+cnn_model_dir = file.path(project_dir,"Smap/Models/CNN")
+
+#load project data
+load(file.path(project_dir,'uncertainit_paper_load_env_data.RData'))
+```
+
+
+In this short document, we look at using Generalised Additive Models (GAM) for spectral predictions. Here we focus on mid-infrared spectra (MIR). We propose to use the commonly used Partial Least-Squares regression (PLS) to reproject the predictors (i.e. the reflectance recorded at different wavelengths) and combine them in a limited number (typically less than 2) of independent latent variables (LV).  
+
+
+```{r load_data, cache=FALSE}
+# MIR
+
+
+s_mir_carbon_calib <- readRDS(file.path(pls_model_dir,"Mir",'total_carbon_Cali_MIR.rds'))
+s_mir_carbon_valid <- readRDS(file.path(pls_model_dir,"Mir",'total_carbon_Vali_MIR.rds'))
+
+# Texture
+s_mir_texture_calib <- readRDS(file.path(pls_model_dir,"Mir",'clay_pl_Cali_MIR.rds')) %>% dplyr::rename(clay = clay_pl, silt = silt_pl, sand = sand_pl)
+s_mir_texture_valid <- readRDS(file.path(pls_model_dir,"Mir",'clay_pl_Vali_MIR.rds')) %>% dplyr::rename(clay = clay_pl, silt = silt_pl, sand = sand_pl)
+
+
+# P ret
+s_mir_pret_calib <- readRDS(file.path(pls_model_dir,"Mir",'p_ret_Cali_MIR.rds'))
+s_mir_pret_valid <- readRDS(file.path(pls_model_dir,"Mir",'p_ret_Vali_MIR.rds'))
+
+# pH
+s_mir_ph_calib <- readRDS(file.path(pls_model_dir,"Mir",'ph_water_Cali_MIR.rds'))
+s_mir_ph_valid <- readRDS(file.path(pls_model_dir,"Mir",'ph_water_Vali_MIR.rds'))
+```
+
+
+```{r load_data, cache=FALSE}
+# VNIR
+
+
+s_vnir_carbon_calib <- readRDS(file.path(pls_model_dir,"Vnir",'CARBON_Cali_VNIR.rds'))
+s_vnir_carbon_valid <- readRDS(file.path(pls_model_dir,"Vnir",'CARBON_Vali_VNIR.rds'))
+
+# Texture
+s_vnir_texture_calib <- readRDS(file.path(pls_model_dir,"Vnir",'CLAY_Cali_VNIR.rds')) 
+s_vnir_texture_valid <- readRDS(file.path(pls_model_dir,"Vnir",'CLAY_Vali_VNIR.rds')) 
+
+
+# P ret
+s_vnir_pret_calib <- readRDS(file.path(pls_model_dir,"Vnir",'pRetention_Cali_VNIR.rds'))
+s_vnir_pret_valid <- readRDS(file.path(pls_model_dir,"Vnir",'pRetention_Vali_VNIR.rds'))
+
+# pH
+s_vnir_ph_calib <- readRDS(file.path(pls_model_dir,"Vnir",'pH_Cali_VNIR.rds'))
+s_vnir_ph_valid <- readRDS(file.path(pls_model_dir,"Vnir",'pH_Vali_VNIR.rds'))
+```
+
+
+
+```{r load_data, cache=FALSE}
+# Only RUn Save dataet to file if you need a csv copy
+#mir
+write.csv(s_mir_carbon_calib,"C:/Projects/SmapProjects/SpectraData2023/mir_carbon_cali.csv")
+write.csv(s_mir_carbon_valid,"C:/Projects/SmapProjects/SpectraData2023/mir_carbon_val.csv")
+
+write.csv(s_mir_texture_calib,"C:/Projects/SmapProjects/SpectraData2023/mir_texture_cali.csv")
+write.csv(s_mir_texture_valid,"C:/Projects/SmapProjects/SpectraData2023/mir_texture_val.csv")
+
+write.csv(s_mir_pret_calib,"C:/Projects/SmapProjects/SpectraData2023/mir_pret_cali.csv")
+write.csv(s_mir_pret_valid,"C:/Projects/SmapProjects/SpectraData2023/mir_pret_val.csv")
+
+write.csv(s_mir_ph_calib,"C:/Projects/SmapProjects/SpectraData2023/mir_ph_cali.csv")
+write.csv(s_mir_ph_valid,"C:/Projects/SmapProjects/SpectraData2023/mir_ph_val.csv")
+
+
+#vnir
+write.csv(s_vnir_carbon_calib,"C:/Projects/SmapProjects/SpectraData2023/vnir_carbon_cali.csv")
+write.csv(s_vnir_carbon_valid,"C:/Projects/SmapProjects/SpectraData2023/vnir_carbon_val.csv")
+
+write.csv(s_vnir_texture_calib,"C:/Projects/SmapProjects/SpectraData2023/vnir_texture_cali.csv")
+write.csv(s_vnir_texture_valid,"C:/Projects/SmapProjects/SpectraData2023/vnir_texture_val.csv")
+
+write.csv(s_vnir_pret_calib,"C:/Projects/SmapProjects/SpectraData2023/vnir_pret_cali.csv")
+write.csv(s_vnir_pret_valid,"C:/Projects/SmapProjects/SpectraData2023/vnirr_pret_val.csv")
+
+write.csv(s_vnir_ph_calib,"C:/Projects/SmapProjects/SpectraData2023/vnir_ph_cali.csv")
+write.csv(s_vnir_ph_valid,"C:/Projects/SmapProjects/SpectraData2023/vnir_ph_val.csv")
+
+
+```
+
+
+```{r load_pls_models}
+fit_pls_carbon_train <- readRDS(file.path(project_dir,"Mir",'total_carbon_PLSR_MIR.rds'))
+fit_pls_sand_train <- readRDS(file.path(project_dir,"Mir",'sand_pl_PLSR_MIR.rds'))
+fit_pls_silt_train <- readRDS(file.path(project_dir,"Mir",'silt_pl_PLSR_MIR.rds'))
+fit_pls_clay_train <- readRDS(file.path(project_dir,"Mir",'clay_pl_PLSR_MIR.rds'))
+fit_pls_pret_train <- readRDS(file.path(project_dir,"Mir",'p_ret_PLSR_MIR.rds'))
+fit_pls_ph_train <- readRDS(file.path(project_dir,"Mir",'ph_water_PLSR_MIR.rds'))
+
+fit_pls_carbon <- fit_pls_carbon_train$finalModel
+fit_pls_sand <- fit_pls_sand_train$finalModel
+fit_pls_silt <- fit_pls_silt_train$finalModel
+fit_pls_clay <- fit_pls_clay_train$finalModel
+fit_pls_pret <- fit_pls_pret_train$finalModel
+fit_pls_ph <- fit_pls_ph_train$finalModel
+```
+
+We considered the PLS models trained by Yuxin. Their respective optimal number of LV was chosen using repeated cross-validation. See figure below to see the number of LV retained for each model. Arguably both clay and pH could be trimmed down to 20 LVs. 
+
+```{r pls_param}
+ncomp_carbon <- fit_pls_carbon_train$bestTune$ncomp
+ncomp_clay <- fit_pls_clay_train$bestTune$ncomp
+ncomp_silt <- fit_pls_silt_train$bestTune$ncomp
+ncomp_sand <- fit_pls_sand_train$bestTune$ncomp
+ncomp_pret <- fit_pls_pret_train$bestTune$ncomp
+ncomp_ph <- fit_pls_ph_train$bestTune$ncomp
+
+p_pls_carbon <- ggplot(fit_pls_carbon_train) + 
+  geom_vline(xintercept = fit_pls_carbon_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("carbon, ", fit_pls_carbon_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+p_pls_clay <- ggplot(fit_pls_clay_train) + 
+  geom_vline(xintercept = fit_pls_clay_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("clay, ", fit_pls_clay_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+p_pls_silt <- ggplot(fit_pls_silt_train) + 
+  geom_vline(xintercept = fit_pls_silt_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("silt, ", fit_pls_silt_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+p_pls_sand <- ggplot(fit_pls_sand_train) + 
+  geom_vline(xintercept = fit_pls_sand_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("sand, ", fit_pls_sand_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+p_pls_pret <- ggplot(fit_pls_pret_train) + 
+  geom_vline(xintercept = fit_pls_pret_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("P ret, ", fit_pls_pret_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+p_pls_ph <- ggplot(fit_pls_ph_train) + 
+  geom_vline(xintercept = fit_pls_ph_train$bestTune$ncomp, colour = "darkred") +
+  labs(title = paste0("pH, ", fit_pls_ph_train$bestTune$ncomp, " components")) +
+  theme_bw() + theme(panel.grid = element_blank())
+
+print(
+  p_pls_carbon + p_pls_pret + p_pls_ph +
+  p_pls_clay + p_pls_silt + p_pls_sand +
+  plot_layout(ncol = 3)
+)
+```
+
+# PLS performance
+
+```{r pls_preds}
+preds_pls_carbon_calib <- predict(
+  fit_pls_carbon,
+  newdata = s_mir_carbon_calib$nir,
+  type = "response"
+)[,,ncomp_carbon]
+
+preds_pls_carbon_valid <- predict(
+  fit_pls_carbon,
+  newdata = s_mir_carbon_valid$nir,
+  type = "response"
+)[,,ncomp_carbon]
+
+preds_pls_clay_calib <- predict(
+  fit_pls_clay,
+  newdata = s_mir_texture_calib$nir,
+  type = "response"
+)[,,ncomp_clay]
+
+preds_pls_clay_valid <- predict(
+  fit_pls_clay,
+  newdata = s_mir_texture_valid$nir,
+  type = "response"
+)[,,ncomp_clay]
+
+preds_pls_silt_calib <- predict(
+  fit_pls_silt,
+  newdata = s_mir_texture_calib$nir,
+  type = "response"
+)[,,ncomp_silt]
+
+preds_pls_silt_valid <- predict(
+  fit_pls_silt,
+  newdata = s_mir_texture_valid$nir,
+  type = "response"
+)[,,ncomp_silt]
+
+preds_pls_sand_calib <- predict(
+  fit_pls_sand,
+  newdata = s_mir_texture_calib$nir,
+  type = "response"
+)[,,ncomp_sand]
+
+preds_pls_sand_valid <- predict(
+  fit_pls_sand,
+  newdata = s_mir_texture_valid$nir,
+  type = "response"
+)[,,ncomp_sand]
+
+preds_pls_pret_calib <- predict(
+  fit_pls_pret,
+  newdata = s_mir_pret_calib$nir,
+  type = "response"
+)[,,ncomp_pret]
+
+preds_pls_pret_valid <- predict(
+  fit_pls_pret,
+  newdata = s_mir_pret_valid$nir,
+  type = "response"
+)[,,ncomp_pret]
+
+preds_pls_ph_calib <- predict(
+  fit_pls_ph,
+  newdata = s_mir_ph_calib$nir,
+  type = "response"
+)[,,ncomp_pret]
+
+preds_pls_ph_valid <- predict(
+  fit_pls_ph,
+  newdata = s_mir_ph_valid$nir,
+  type = "response"
+)[,,ncomp_pret]
+```
+
+```{r results_pls, cache=TRUE}
+res_pls <- bind_rows(
+  data.frame(
+    type = "calibration",
+    variable = "carbon",
+    obs = s_mir_carbon_calib$total_carbon,
+    # These were originally square root transformed
+    pred = preds_pls_carbon_calib ^ 2
+  ),
+  data.frame(
+    type = "validation",
+    variable = "carbon",
+    obs = s_mir_carbon_valid$total_carbon,
+    # These were originally square root transformed
+    pred = preds_pls_carbon_valid ^ 2
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "clay",
+    obs = s_mir_texture_calib$clay,
+    pred = preds_pls_clay_calib
+  ),
+  data.frame(
+    type = "validation",
+    variable = "clay",
+    obs = s_mir_texture_valid$clay,
+    pred = preds_pls_clay_valid
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "silt",
+    obs = s_mir_texture_calib$silt,
+    pred = preds_pls_silt_calib
+  ),
+  data.frame(
+    type = "validation",
+    variable = "silt",
+    obs = s_mir_texture_valid$silt,
+    pred = preds_pls_silt_valid
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "sand",
+    obs = s_mir_texture_calib$sand,
+    pred = preds_pls_sand_calib
+  ),
+  data.frame(
+    type = "validation",
+    variable = "sand",
+    obs = s_mir_texture_valid$sand,
+    pred = preds_pls_sand_valid
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "P retention",
+    obs = s_mir_pret_calib$p_ret,
+    pred = preds_pls_pret_calib
+  ),
+  data.frame(
+    type = "validation",
+    variable = "P retention",
+    obs = s_mir_pret_valid$p_ret,
+    pred = preds_pls_pret_valid
+  ),
+    data.frame(
+    type = "calibration",
+    variable = "pH",
+    obs = s_mir_ph_calib$ph,
+    pred = preds_pls_ph_calib
+  ),
+  data.frame(
+    type = "validation",
+    variable = "pH",
+    obs = s_mir_ph_valid$ph,
+    pred = preds_pls_ph_valid
+  )
+)
+```
+
+Performance of the PLS models is shown below. 
+
+```{r pls_table, results='asis', cache=FALSE}
+res_pls %>% 
+  plyr::ddply(
+    c("type", "variable"), 
+    function(x) spectacles::spectroSummary(na.omit(x))
+  ) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+```{r pls_plots, cache=FALSE}
+p_pls_carbon <- res_pls %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_clay <- res_pls %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Clay (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_silt <- res_pls %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Silt (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_sand <- res_pls %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Sand (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_pret <- res_pls %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "P Retention (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_ph <- res_pls %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "pH") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+print(
+  p_pls_carbon + p_pls_pret + p_pls_ph +
+  p_pls_clay + p_pls_silt + p_pls_sand + 
+  patchwork::plot_layout(ncol = 3)
+)
+```
+
+# MGCV models
+
+Prediction models from the LV extracted for each variable were trained using GAMs, as implemented in the `mgcv` library for R. For carbon, clay, and P retention, beta regression was used since those variables are bounded between 0 and 100%. For pH, a Gaussian family was used. 
+
+```{r lvs}
+
+lvs_carbon_calib <- predict(fit_pls_carbon, newdata = s_mir_carbon_calib$nir, type = "scores")
+lvs_carbon_valid <- predict(fit_pls_carbon, newdata = s_mir_carbon_valid$nir, type = "scores")
+
+lvs_clay_calib <- predict(fit_pls_clay, newdata = s_mir_texture_calib$nir, type = "scores")
+lvs_clay_valid <- predict(fit_pls_clay, newdata = s_mir_texture_valid$nir, type = "scores")
+
+lvs_silt_calib <- predict(fit_pls_silt, newdata = s_mir_texture_calib$nir, type = "scores")
+lvs_silt_valid <- predict(fit_pls_silt, newdata = s_mir_texture_valid$nir, type = "scores")
+
+lvs_sand_calib <- predict(fit_pls_sand, newdata = s_mir_texture_calib$nir, type = "scores")
+lvs_sand_valid <- predict(fit_pls_sand, newdata = s_mir_texture_valid$nir, type = "scores")
+
+lvs_pret_calib <- predict(fit_pls_pret, newdata = s_mir_pret_calib$nir, type = "scores")
+lvs_pret_valid <- predict(fit_pls_pret, newdata = s_mir_pret_valid$nir, type = "scores")
+
+lvs_ph_calib <- predict(fit_pls_ph, newdata = s_mir_ph_calib$nir, type = "scores")
+lvs_ph_valid <- predict(fit_pls_ph, newdata = s_mir_ph_valid$nir, type = "scores")
+
+```
+
+
+```{r lvs}
+
+#RUN
+lv_df_carbon_calib <- data.frame(
+  # site = s_mir_carbon_calib$siteId,
+  total_carbon = s_mir_carbon_calib$total_carbon / 100,
+  lvs_carbon_calib
+)
+lv_df_carbon_valid <- data.frame(
+  total_carbon = s_mir_carbon_valid$total_carbon / 100,
+  lvs_carbon_valid
+)
+
+lv_df_clay_calib <- data.frame(
+  clay = s_mir_texture_calib$clay / 100,
+  lvs_clay_calib
+)
+lv_df_clay_valid <- data.frame(
+  clay = s_mir_texture_valid$clay / 100,
+  lvs_clay_valid
+)
+
+lv_df_silt_calib <- data.frame(
+  silt = s_mir_texture_calib$silt / 100,
+  lvs_silt_calib
+)
+lv_df_silt_valid <- data.frame(
+  silt = s_mir_texture_valid$silt / 100,
+  lvs_silt_valid
+)
+
+lv_df_sand_calib <- data.frame(
+  sand = s_mir_texture_calib$sand / 100,
+  lvs_sand_calib
+)
+lv_df_sand_valid <- data.frame(
+  sand = s_mir_texture_valid$sand / 100,
+  lvs_sand_valid
+)
+
+lv_df_pret_calib <- data.frame(
+  p_ret = s_mir_pret_calib$p_ret / 100,
+  lvs_pret_calib
+)
+lv_df_pret_valid <- data.frame(
+  p_ret = s_mir_pret_valid$p_ret / 100,
+  lvs_pret_valid
+)
+
+lv_df_ph_calib <- data.frame(
+  ph = s_mir_ph_calib$ph_water,
+  lvs_ph_calib
+)
+lv_df_ph_valid <- data.frame(
+  ph = s_mir_ph_valid$ph_water,
+  lvs_ph_valid
+)
+```
+
+```{r formulas}
+#DONT RUN FROM HERE
+fm_carbon <- as.formula(
+  paste0(
+    "total_carbon ~ ",
+    paste0(
+      "s(",
+      names(lv_df_carbon_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+
+fm_clay <- as.formula(
+  paste0(
+    "clay ~ ",
+    paste0(
+      "s(",
+      names(lv_df_clay_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+
+fm_silt <- as.formula(
+  paste0(
+    "silt ~ ",
+    paste0(
+      "s(",
+      names(lv_df_silt_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+
+fm_sand <- as.formula(
+  paste0(
+    "sand ~ ",
+    paste0(
+      "s(",
+      names(lv_df_sand_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+
+fm_pret <- as.formula(
+  paste0(
+    "p_ret ~ ",
+    paste0(
+      "s(",
+      names(lv_df_pret_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+
+fm_ph <- as.formula(
+  paste0(
+    "ph ~ ",
+    paste0(
+      "s(",
+      names(lv_df_ph_calib)[-1],
+      ")",
+      collapse = " + "
+    )
+  )
+)
+```
+
+
+```{r mgcv_model_carbon, cache=TRUE}
+fit_mgcv_carbon <- gam(
+  fm_carbon,
+  data = lv_df_carbon_calib,
+  family = betar(
+    link = "logit"
+  ),
+  method = 'REML'
+)
+```
+
+```{r mgcv_model_clay, cache=TRUE}
+fit_mgcv_clay <- gam(
+  fm_clay,
+  data = lv_df_clay_calib,
+  family = betar(
+    link = "logit"
+  ),
+  method = 'REML'
+)
+```
+
+```{r mgcv_model_silt, cache=TRUE}
+fit_mgcv_silt <- gam(
+  fm_silt,
+  data = lv_df_silt_calib,
+  family = betar(
+    link = "logit"
+  ),
+  method = 'REML'
+)
+```
+
+```{r mgcv_model_sand, cache=TRUE}
+fit_mgcv_sand <- gam(
+  fm_sand,
+  data = lv_df_sand_calib,
+  family = betar(
+    link = "logit"
+  ),
+  method = 'REML'
+)
+```
+
+```{r mgcv_model_pret, cache=TRUE}
+fit_mgcv_pret <- gam(
+  fm_pret,
+  data = lv_df_pret_calib,
+  family = betar(
+    link = "logit"
+  ),
+  method = 'REML'
+)
+```
+
+```{r mgcv_model_ph, cache=TRUE}
+fit_mgcv_ph <- gam(
+  fm_ph,
+  data = lv_df_ph_calib,
+  family = gaussian(
+    link = "identity"
+  ),
+  method = 'REML'
+)
+```
+
+
+##### DOnt run if you dont want to run the GAM sim from scratch, you can just reload the data by using the next snippet below
+```{r mgcv_sim, cache=TRUE}
+# only run if you need to re-run the GAM model, otherwise, load the save data below
+
+n_sim_mgcv <- 1000
+
+sim_carbon <- 100 * gratia:::simulate.gam(
+  fit_mgcv_carbon, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_carbon_calib, lv_df_carbon_valid)
+)
+sim_clay <- 100 * gratia:::simulate.gam(
+  fit_mgcv_clay, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_clay_calib, lv_df_clay_valid)
+)
+sim_silt <- 100 * gratia:::simulate.gam(
+  fit_mgcv_silt, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_silt_calib, lv_df_silt_valid)
+)
+sim_sand <- 100 * gratia:::simulate.gam(
+  fit_mgcv_sand, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_sand_calib, lv_df_sand_valid)
+)
+sim_pret <- 100 * gratia:::simulate.gam(
+  fit_mgcv_pret, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_pret_calib, lv_df_pret_valid)
+)
+sim_ph <- gratia:::simulate.gam(
+  fit_mgcv_ph, 
+  n_sim_mgcv, 
+  newdata = rbind(lv_df_ph_calib, lv_df_ph_valid)
+)
+
+```
+##### To reload the GAM sim data
+```{r save model, cache=TRUE}
+
+#run if saving the GAM model above, otherwise load the GAM sim data using the code below
+
+saveRDS(sim_carbon, file.path(gam_model_dir,"Mir","gam_carbon_model.rda"))
+
+saveRDS(sim_sand, file.path(gam_model_dir,"Mir","gam_sand_model.rda"))
+
+saveRDS(sim_silt, file.path(gam_model_dir,"Mir","gam_silt_model.rda"))
+
+saveRDS(sim_ph, file.path(gam_model_dir,"Mir","gam_ph_model.rda"))
+
+saveRDS(sim_pret, file.path(gam_model_dir,"Mir","gam_pret_model.rda"))
+
+saveRDS(sim_clay, file.path(gam_model_dir,"Mir","gam_clay_model.rda"))
+```
+
+
+#RESULME RUNNING
+
+
+```{r load gam_model, cache=TRUE}
+sim_carbon =readRDS(file.path(gam_model_dir,"Mir","gam_carbon_model.rda"))
+
+sim_sand =readRDS(file.path(gam_model_dir,"Mir","gam_sand_model.rda"))
+
+sim_silt =readRDS(file.path(gam_model_dir,"Mir","gam_silt_model.rda"))
+
+sim_ph =readRDS(file.path(gam_model_dir,"Mir","gam_ph_model.rda"))
+
+sim_pret =readRDS(file.path(gam_model_dir,"Mir","gam_pret_model.rda"))
+
+sim_clay =readRDS(file.path(gam_model_dir,"Mir","gam_clay_model.rda"))
+```
+
+
+```{r mgcv_sim, cache=TRUE}
+# Summarise simulations for prediction interval computation
+preds_mgcv_carbon <- inlabru:::bru_summarise(
+  sim_carbon, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+preds_mgcv_clay <- inlabru:::bru_summarise(
+  sim_clay, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+preds_mgcv_silt <- inlabru:::bru_summarise(
+  sim_silt, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+preds_mgcv_sand <- inlabru:::bru_summarise(
+  sim_sand, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+preds_mgcv_pret <- inlabru:::bru_summarise(
+  sim_pret, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+preds_mgcv_ph <- inlabru:::bru_summarise(
+  sim_ph, 
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+```
+
+```{r results_mgcv, cache=TRUE}
+res_mgcv <- bind_rows(
+  data.frame(
+    type = "calibration",
+    variable = "carbon",
+    obs = s_mir_carbon_calib$total_carbon,
+    pred = preds_mgcv_carbon$median[1:nrow(s_mir_carbon_calib)],
+    lower = preds_mgcv_carbon$q0.05[1:nrow(s_mir_carbon_calib)],
+    upper = preds_mgcv_carbon$q0.95[1:nrow(s_mir_carbon_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "carbon",
+    obs = s_mir_carbon_valid$total_carbon,
+    pred = preds_mgcv_carbon$median[-1 * (1:nrow(s_mir_carbon_calib))],
+    lower = preds_mgcv_carbon$q0.05[-1 * (1:nrow(s_mir_carbon_calib))],
+    upper = preds_mgcv_carbon$q0.95[-1 * (1:nrow(s_mir_carbon_calib))]
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "clay",
+    obs = s_mir_texture_calib$clay,
+    pred = preds_mgcv_clay$median[1:nrow(s_mir_texture_calib)],
+    lower = preds_mgcv_clay$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = preds_mgcv_clay$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "clay",
+    obs = s_mir_texture_valid$clay,
+    pred = preds_mgcv_clay$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = preds_mgcv_clay$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = preds_mgcv_clay$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "silt",
+    obs = s_mir_texture_calib$silt,
+    pred = preds_mgcv_silt$median[1:nrow(s_mir_texture_calib)],
+    lower = preds_mgcv_silt$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = preds_mgcv_silt$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "silt",
+    obs = s_mir_texture_valid$silt,
+    pred = preds_mgcv_silt$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = preds_mgcv_silt$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = preds_mgcv_silt$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "sand",
+    obs = s_mir_texture_calib$sand,
+    pred = preds_mgcv_sand$median[1:nrow(s_mir_texture_calib)],
+    lower = preds_mgcv_sand$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = preds_mgcv_sand$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "sand",
+    obs = s_mir_texture_valid$sand,
+    pred = preds_mgcv_sand$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = preds_mgcv_sand$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = preds_mgcv_sand$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  data.frame(
+    type = "calibration",
+    variable = "P retention",
+    obs = s_mir_pret_calib$p_ret,
+    pred = preds_mgcv_pret$median[1:nrow(s_mir_pret_calib)],
+    lower = preds_mgcv_pret$q0.05[1:nrow(s_mir_pret_calib)],
+    upper = preds_mgcv_pret$q0.95[1:nrow(s_mir_pret_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "P retention",
+    obs = s_mir_pret_valid$p_ret,
+    pred = preds_mgcv_pret$median[-1 * (1:nrow(s_mir_pret_calib))],
+    lower = preds_mgcv_pret$q0.05[-1 * (1:nrow(s_mir_pret_calib))],
+    upper = preds_mgcv_pret$q0.95[-1 * (1:nrow(s_mir_pret_calib))]
+  ),
+    data.frame(
+    type = "calibration",
+    variable = "pH",
+    obs = s_mir_ph_calib$ph,
+    pred = preds_mgcv_ph$median[1:nrow(s_mir_ph_calib)],
+    lower = preds_mgcv_ph$q0.05[1:nrow(s_mir_ph_calib)],
+    upper = preds_mgcv_ph$q0.95[1:nrow(s_mir_ph_calib)]
+  ),
+  data.frame(
+    type = "validation",
+    variable = "pH",
+    obs = s_mir_ph_valid$ph,
+    pred = preds_mgcv_ph$median[-1 * (1:nrow(s_mir_ph_calib))],
+    lower = preds_mgcv_ph$q0.05[-1 * (1:nrow(s_mir_ph_calib))],
+    upper = preds_mgcv_ph$q0.95[-1 * (1:nrow(s_mir_ph_calib))]
+  )
+)
+```
+
+Performance of the GAM models is shown below. Overall, the results look good, and probably on par with the performance offered by the PLS. 
+
+```{r mgcv_table, results='asis', cache=FALSE}
+res_mgcv %>% 
+  plyr::ddply(
+    c("type", "variable"), 
+    function(x) spectacles::spectroSummary(na.omit(x))
+  ) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+```{r mgcv_plots, cache=FALSE}
+p_mgcv_carbon <- res_mgcv %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_clay <- res_mgcv %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Clay (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_silt <- res_mgcv %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Silt (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_sand <- res_mgcv %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Sand (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_pret <- res_mgcv %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "P Retention (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_ph <- res_mgcv %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "pH") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+print(
+  p_mgcv_carbon + p_mgcv_pret + p_mgcv_ph + 
+  p_mgcv_clay + p_mgcv_silt + p_mgcv_sand + 
+  patchwork::plot_layout(ncol  =2)
+)
+```
+
+## CNN Performance
+
+```{r get_result, cache=FALSE}
+texture_df= read.csv(file.path(cnn_model_dir,"Mir","texture.csv"))
+carbon_df= read.csv(file.path(cnn_model_dir,"Mir","carbon.csv"))
+ph_df= read.csv(file.path(cnn_model_dir,"Mir","ph.csv"))
+pret_df= read.csv(file.path(cnn_model_dir,"Mir","pret.csv"))
+
+#merge the csv 
+cnn_df <- merge(texture_df, carbon_df,  all = TRUE)
+cnn_df <- merge(cnn_df, pret_df,  all = TRUE)
+cnn_df <- merge(cnn_df, ph_df,  all = TRUE)
+
+```
+
+
+```{r cnn_metrics, cache=FALSE}
+cnn_df %>% 
+  plyr::ddply(
+    c("type", "variable"), 
+    function(x) spectacles::spectroSummary(na.omit(x))
+  ) %>% 
+  knitr::kable(digits = 2)
+```
+
+```{r cnn_plots, cache=FALSE}
+p_cnn_carbon <- cnn_df %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_clay <- cnn_df %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Clay (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_silt <- cnn_df %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Silt (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_sand <- cnn_df %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Sand (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_pret <- cnn_df %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "P Retention (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_ph <- cnn_df %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "pH") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+print(
+  p_cnn_carbon + p_cnn_pret + p_cnn_ph + 
+  p_cnn_clay + p_cnn_silt + p_cnn_sand + 
+  patchwork::plot_layout(ncol  =2)
+)
+
+```
+
+# Derivation of prediction intervals
+
+## PLS
+
+For PLS, the prediction intervals were derived using non-parameric boostrap of Yuxin's models, with 1000 replicates for each model.
+
+
+
+
+
+```{r bs_pls_valid}
+run_parallel_bootstrap_pls <- function(calib,valid, property, ncom, adjust = FALSE, num_cores = 12) {
+ 
+  df= rbind(calib,valid)
+  n_bs <- 1000
+  adjust_pred= adjust
+  ncom=ncom
+  
+  # Set up parallel processing
+  cl <- makeCluster(num_cores)
+  clusterExport(cl, c("df", "ncom", "n_bs"))  # Export all necessary variables
+  
+  bs <- parLapply(cl, 1:n_bs, function(i) {
+    
+    # Define formula based on the condition
+    if (property == "total_carbon") {
+      fml <- as.formula("sqrt(total_carbon) ~ nir")
+    } else if (property == "ph_water") {
+      fml <- as.formula("ph_water ~ nir ")
+    } else if (property == "p_ret") {
+      fml <- as.formula("p_ret ~ nir ")
+    } else if (property == "sand") {
+      fml <- as.formula("sand ~ nir ")
+    } else if (property == "silt") {
+      fml <- as.formula("silt ~ nir ")
+    } else if (property == "clay") {
+      fml <- as.formula("clay ~ nir ")
+    }
+    
+    d <- df[sample(nrow(df), replace = TRUE), ]
+    fit <- pls::plsr(
+      fml,
+      data = d,
+      ncomp = ncom,
+      validation = "none"
+    )
+    
+    preds <- pls:::predict.mvr(
+      fit,
+      newdata = df$nir,
+      type = "response"
+    )[,,ncom]
+    
+    # Back transform that sqrt
+    if(adjust_pred){
+       preds <- preds ^ 2
+    }
+   
+   
+    
+    return(preds)
+  })
+  
+  stopCluster(cl)
+  
+  return(bs)
+}
+
+```
+
+
+
+
+#### Dont run if you are not running the PLS BS from scratch
+```{r bs_pls_valid}
+
+
+bs_carbon <-run_parallel_bootstrap_pls(s_mir_carbon_calib,s_mir_carbon_valid, "total_carbon", ncom = ncomp_carbon, adjust = TRUE, num_cores =4)
+
+bs_clay <- run_parallel_bootstrap_pls(s_mir_texture_calib,s_mir_texture_valid,"clay",  ncom = ncomp_clay,adjust = FALSE, num_cores = 4)
+
+bs_silt <- run_parallel_bootstrap_pls(s_mir_texture_calib,s_mir_texture_valid,"silt",  ncom = ncomp_silt,adjust = FALSE, num_cores =4)
+
+bs_sand <- run_parallel_bootstrap_pls(s_mir_texture_calib,s_mir_texture_valid,"sand",  ncom = ncomp_sand,adjust = FALSE, num_cores =4)
+
+bs_pret <- run_parallel_bootstrap_pls(s_mir_pret_calib,s_mir_pret_valid,"p_ret",  ncom = ncomp_pret,adjust = FALSE, num_cores = 4)
+
+bs_ph <- run_parallel_bootstrap_pls(s_mir_ph_calib,s_mir_ph_valid,"ph_water",  ncom = ncomp_ph,adjust = FALSE, num_cores =4)
+
+
+```
+
+
+```{r bs_pls_cali}
+
+
+#save RDS pls-BS if you dont have them
+saveRDS(bs_pret, file.path(pls_bs_model_dir,'bs_pret.rda'))
+saveRDS(bs_ph, file.path(pls_bs_model_dir,'bs_ph.rda'))
+saveRDS(bs_carbon, file.path(pls_bs_model_dir,'bs_carbon.rda'))
+saveRDS(bs_sand,file.path(pls_bs_model_dir, 'bs_sand.rda'))
+saveRDS(bs_silt, file.path(pls_bs_model_dir,'bs_silt.rda'))
+saveRDS(bs_clay, file.path(pls_bs_model_dir,'bs_clay.rda'))
+
+
+```
+
+##### Load the PLS-BS data
+
+```{r bs_pls}
+#read pls-bs available
+bs_carbon <- readRDS(file.path(pls_bs_model_dir,'bs_carbon.rda'))
+bs_clay <- readRDS(file.path(pls_bs_model_dir,'bs_clay.rda'))
+bs_silt <- readRDS(file.path(pls_bs_model_dir,'bs_silt.rda'))
+bs_sand <- readRDS(file.path(pls_bs_model_dir,'bs_sand.rda'))
+bs_pret <- readRDS(file.path(pls_bs_model_dir,'bs_pret.rda'))
+bs_ph <- readRDS(file.path(pls_bs_model_dir,'bs_ph.rda'))
+
+```
+
+
+```{r bs_pls_cal}
+#
+
+# Now analyze the bootstrap_results list to estimate statistics
+# such as confidence intervals, standard errors, etc.
+
+bs_carbon_res <- bs_carbon %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+  probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+)
+
+bs_clay_res <- bs_clay %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+    probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+  )
+
+bs_pret_res <- bs_pret %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+    probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+  )
+
+bs_sand_res <- bs_sand %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+    probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+  )
+bs_silt_res <- bs_silt %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+    probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+  )
+
+
+bs_ph_res <- bs_ph %>% 
+  t() %>% 
+  inlabru:::bru_summarise(
+    probs = c(0.025, 0.05, 0.25, 0.5, 0.75, 0.95, 0.975)
+  )
+```
+
+
+
+
+
+```{r assemble_bs_results}
+res_pls_bs <- rbind(
+           
+  # Carbon
+  data.frame(
+    type = "validation",
+    variable = "carbon",
+     obs = s_mir_carbon_valid$total_carbon,
+    pred = bs_carbon_res$median[-1 * (1:nrow(s_mir_carbon_calib))],
+    lower = bs_carbon_res$q0.05[-1 * (1:nrow(s_mir_carbon_calib))],
+    upper = bs_carbon_res$q0.95[-1 * (1:nrow(s_mir_carbon_calib))]
+  ),
+  
+  data.frame(
+    type = "Calibration",
+    variable = "carbon",
+    obs = s_mir_carbon_calib$total_carbon,
+    pred = bs_carbon_res$median[1:nrow(s_mir_carbon_calib)],
+    lower = bs_carbon_res$q0.05[1:nrow(s_mir_carbon_calib)],
+    upper = bs_carbon_res$q0.95[1:nrow(s_mir_carbon_calib)]
+  ),
+  
+  
+  # Clay
+  data.frame(
+    type = "validation",
+    variable = "clay",
+    obs = s_mir_texture_valid$clay,
+    pred = bs_clay_res$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = bs_clay_res$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = bs_clay_res$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  
+  data.frame(
+    type = "Calibration",
+    variable = "clay",
+     obs = s_mir_texture_calib$clay,
+    pred = bs_clay_res$median[1:nrow(s_mir_texture_calib)],
+    lower = bs_clay_res$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = bs_clay_res$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  
+  
+  # Silt
+  data.frame(
+    type = "validation",
+    variable = "silt",
+    obs = s_mir_texture_valid$silt,
+    pred = bs_silt_res$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = bs_silt_res$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = bs_silt_res$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  data.frame(
+    type = "Calibration",
+    variable = "silt",
+      obs = s_mir_texture_calib$silt,
+    pred = bs_silt_res$median[1:nrow(s_mir_texture_calib)],
+    lower = bs_silt_res$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = bs_silt_res$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  
+  # Sand
+  data.frame(
+    type = "validation",
+    variable = "sand",
+    obs = s_mir_texture_valid$sand,
+    pred = bs_sand_res$median[-1 * (1:nrow(s_mir_texture_calib))],
+    lower = bs_sand_res$q0.05[-1 * (1:nrow(s_mir_texture_calib))],
+    upper = bs_sand_res$q0.95[-1 * (1:nrow(s_mir_texture_calib))]
+  ),
+  data.frame(
+    type = "Calibration",
+    variable = "sand",
+     obs = s_mir_texture_calib$sand,
+    pred = bs_sand_res$median[1:nrow(s_mir_texture_calib)],
+    lower = bs_sand_res$q0.05[1:nrow(s_mir_texture_calib)],
+    upper = bs_sand_res$q0.95[1:nrow(s_mir_texture_calib)]
+  ),
+  
+  # P Retention
+  data.frame(
+    type = "validation",
+    variable = "P retention",
+    obs = s_mir_pret_valid$p_ret,
+    pred = bs_pret_res$median[-1 * (1:nrow(s_mir_pret_calib))],
+    lower = bs_pret_res$q0.05[-1 * (1:nrow(s_mir_pret_calib))],
+    upper = bs_pret_res$q0.95[-1 * (1:nrow(s_mir_pret_calib))]
+  ),
+   data.frame(
+    type = "Calibration",
+    variable = "P retention",
+     obs = s_mir_pret_calib$p_ret,
+    pred = bs_pret_res$median[1:nrow(s_mir_pret_calib)],
+    lower = bs_pret_res$q0.05[1:nrow(s_mir_pret_calib)],
+    upper = bs_pret_res$q0.95[1:nrow(s_mir_pret_calib)]
+  ),
+ 
+  # pH
+  data.frame(
+    type = "validation",
+    variable = "pH",
+    obs = s_mir_ph_valid$ph_water,
+    pred = bs_ph_res$median[-1 * (1:nrow(s_mir_ph_calib))],
+    lower = bs_ph_res$q0.05[-1 * (1:nrow(s_mir_ph_calib))],
+    upper = bs_ph_res$q0.95[-1 * (1:nrow(s_mir_ph_calib))]
+  ),
+   data.frame(
+    type = "Calibration",
+    variable = "pH",
+    obs = s_mir_ph_calib$ph_water,
+    pred = bs_ph_res$median[1:nrow(s_mir_ph_calib)],
+    lower = bs_ph_res$q0.05[1:nrow(s_mir_ph_calib)],
+    upper = bs_ph_res$q0.95[1:nrow(s_mir_ph_calib)]
+  )
+)
+```
+
+
+```{r cnn_metrics, cache=FALSE}
+res_pls_bs %>% 
+  plyr::ddply(
+    c("type", "variable"), 
+    function(x) spectacles::spectroSummary(na.omit(x))
+  ) %>% 
+  knitr::kable(digits = 2)
+```
+
+
+
+
+
+
+```{r pls_plots_pi, cache=FALSE}
+
+
+
+p_pls_carbon <- res_pls_bs %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_clay <- res_pls_bs %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+     xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Clay (%)") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_silt <- res_pls_bs %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Silt (%)") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_sand <- res_pls_bs %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Sand (%)") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_pret <- res_pls_bs %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "P Retention (%)") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_pls_ph <- res_pls_bs %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+     xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  
+  
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "pH") + theme(panel.grid = element_blank())+
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+
+print(
+  p_pls_carbon + p_pls_pret + p_pls_ph + 
+  p_pls_clay + p_pls_silt + p_pls_sand + 
+    patchwork::plot_layout(ncol = 2)
+)
+```
+
+## GAM
+
+The 90% prediction intervals were derived using simulation from the posterior distribution of the trained GAMs. For each variable, 1000 simulations were used. The results with the prediction intervals overlayed over each prediction are shown for each variable on the figure below.
+
+```{r mgcv_plots_pi, cache=FALSE}
+p_mgcv_carbon <- res_mgcv %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_clay <-res_mgcv %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Clay (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_silt <- res_mgcv %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Silt (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_sand <- res_mgcv %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Sand (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_pret <- res_mgcv %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3, lwd = 0.2,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "P Retention (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_mgcv_ph <- res_mgcv %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3, lwd = 0.2,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "pH") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+print(
+  p_mgcv_carbon + p_mgcv_pret + p_mgcv_ph + 
+  p_mgcv_clay + p_mgcv_silt + p_mgcv_sand + 
+    patchwork::plot_layout(ncol  =2)
+)
+```
+## CNN
+
+
+Prediction Interval
+
+```{r mgcv_plots, cache=FALSE}
+p_cnn_carbon <- cnn_df %>% 
+  dplyr::filter(variable == "carbon") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() + labs(title = "Total C (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_clay <- res_mgcv %>% 
+  dplyr::filter(variable == "clay") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Clay (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_silt <- res_mgcv %>% 
+  dplyr::filter(variable == "silt") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Silt (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_sand <- res_mgcv %>% 
+  dplyr::filter(variable == "sand") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "Sand (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_pret <- res_mgcv %>% 
+  dplyr::filter(variable == "P retention") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3, lwd = 0.2,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "P Retention (%)") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+p_cnn_ph <- res_mgcv %>% 
+  dplyr::filter(variable == "pH") %>% 
+  ggplot() +
+  geom_abline(slope = 1, intercept = 0, colour = "gray20") +
+  geom_linerange(
+    aes(
+      y = obs,
+      # xmin = pred - se,
+      # xmax = pred + se
+      xmin = lower,
+      xmax = upper
+    ),
+    alpha = 0.3, lwd = 0.2,
+    colour = "royalblue"
+  ) +
+  geom_point(aes(y = obs, x = pred), alpha = 0.3, colour = "royalblue") + 
+  theme_bw() +  labs(title = "pH") +
+  facet_wrap( ~ type) + theme(panel.grid = element_blank())
+
+print(
+  p_cnn_carbon + p_cnn_pret + p_cnn_ph + 
+  p_cnn_clay + p_cnn_silt + p_cnn_sand + 
+    patchwork::plot_layout(ncol  =2)
+)
+```
+
+
+
+# Direct comparison of PLS-BS and GAM
+
+```{r df_compare}
+
+res_compare <- rbind(
+  
+  dplyr::mutate(
+    res_pls_bs,
+    method = "PLS-BS"
+  ),
+  
+  dplyr::mutate(
+    dplyr::filter(cnn_df[, -1] , type == "Validation"),
+    method = "Bayesian CNN"
+  ),
+  dplyr::mutate(
+    dplyr::filter(res_mgcv, type == "validation"),
+    method = "GAM"
+  )
+  
+) %>% 
+  dplyr::mutate(
+    obs_in_pi = (obs >= lower & obs <= upper)
+  )
+```
+
+
+
+```{r compare_table, results='asis', cache=FALSE}
+res_compare %>% 
+    plyr::ddply(
+        c("variable", "method"), 
+        function(x) spectacles::spectroSummary(na.omit(x))
+    ) %>% 
+    knitr::kable(digits = 2)
+```
+
+
+
+```{r figs_compare}
+# Carbon
+p_compare_carbon <- res_compare %>% 
+  dplyr::filter(variable == "carbon") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "carbon") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+# Clay
+p_compare_clay <- res_compare %>% 
+  dplyr::filter(variable == "clay") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "clay") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+# silt
+p_compare_silt <- res_compare %>% 
+  dplyr::filter(variable == "silt") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "silt") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+# sand
+p_compare_sand <- res_compare %>% 
+  dplyr::filter(variable == "sand") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "sand") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+# P retention
+p_compare_pret <- res_compare %>% 
+  dplyr::filter(variable == "P retention") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "P retention") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+# pH
+p_compare_ph <- res_compare %>% 
+  dplyr::filter(variable == "pH") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    # geom_linerange(
+    #     aes(
+    #       y = obs,
+    #       xmin = lower,
+    #       xmax = upper
+    #     ),
+    #     alpha = 0.2, 
+    #     lwd = 1
+    # ) +
+    geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    theme_bw() +  
+    labs(title = "pH") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank()) 
+
+print(
+  p_compare_carbon + p_compare_pret + p_compare_ph + 
+  p_compare_clay + p_compare_silt + p_compare_sand + 
+    patchwork::plot_layout(ncol = 3)
+)
+```
+
+# Quality of the prediction intervals
+
+```{r compare_ci}
+# Carbon
+p_compare_carbon_ci <- res_compare %>% 
+  dplyr::filter(variable == "carbon") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed\n
+      within P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "carbon") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+# Clay
+p_compare_clay_ci <- res_compare %>% 
+  dplyr::filter(variable == "clay") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed\n
+      within P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "clay") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+# silt
+p_compare_silt_ci <- res_compare %>% 
+  dplyr::filter(variable == "silt") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed\n
+      within P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "silt") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+# sand
+p_compare_sand_ci <- res_compare %>% 
+  dplyr::filter(variable == "sand") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed\n
+      within P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "sand") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+# P retention
+p_compare_pret_ci <- res_compare %>% 
+  dplyr::filter(variable == "P retention") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed value\nwithin P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "P retention") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+# pH
+p_compare_ph_ci <- res_compare %>% 
+  dplyr::filter(variable == "pH") %>% 
+    ggplot() +
+    geom_abline(slope = 1, intercept = 0, colour = "grey60") +
+    geom_linerange(
+        aes(
+          y = obs,
+          xmin = lower,
+          xmax = upper,
+          colour = obs_in_pi
+        ),
+        alpha = 0.8, 
+        lwd = 1
+    ) +
+    # geom_point(aes(y = obs, x = pred), alpha = 0.5) + 
+    scale_colour_brewer(
+      "Observed\n
+      within P.I.",
+      palette = "Set1"
+    ) +
+    theme_bw() +  
+    labs(title = "pH") +
+    facet_wrap( ~ method) + 
+    theme(panel.grid = element_blank(), legend.position = "bottom")  +
+  coord_equal()
+
+print(
+  p_compare_carbon_ci + p_compare_pret_ci + p_compare_ph_ci + 
+  p_compare_clay_ci + p_compare_silt_ci + p_compare_sand_ci + 
+    patchwork::plot_layout(ncol = 3)
+)
+```
+
+The quality of the 90% prediction intervals was assessed using the Prediction Interval Coverage Probability (PCIP, %), which is the number of observations from the validation set that fall within the (predicted) prediction interval. All validation PICP values were very close to the target value of 90%.
+
+```{r picp, results="asis"}
+pcip_mgcv <- res_mgcv %>% 
+  dplyr::filter(type == "validation") %>%
+  dplyr::mutate(
+    obs_in_pi = obs >= lower & obs <= upper,
+    obs_in_pi = as.numeric(obs_in_pi)
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp = 100 * picp
+  )
+
+
+pcip_cnn <- cnn_df %>% 
+  dplyr::filter(type == "Validation") %>%
+  dplyr::mutate(
+    obs_in_pi = obs >= lower & obs <= upper,
+    obs_in_pi = as.numeric(obs_in_pi)
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp = 100 * picp
+  )
+pcip_bs <- res_pls_bs %>% 
+  dplyr::filter(type == "validation") %>%
+  dplyr::mutate(
+    obs_in_pi = obs >= lower & obs <= upper,
+    obs_in_pi = as.numeric(obs_in_pi)
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp = 100 * picp
+  )
+
+
+
+rbind(
+  data.frame(method = "GAM", pcip_mgcv),
+  data.frame(method = "Boostraped PLS", pcip_bs),
+   data.frame(method = "Bayesian CNN", pcip_cnn)
+  
+  
+) %>% 
+  tidyr::pivot_wider(
+    names_from = variable,
+    values_from = picp
+  ) %>% 
+  knitr::kable(
+    col.names = c("Method", "P Retention","Total Carbon", "Clay", "pH", "Sand", "Silt"),
+    caption = "Prediction Interval Coverage Probability (PCIP, %) for the different variables modelled, on the validation set. The target is a 90% prediction interval.",
+    digits = 1
+  )
+```
+
+### Mean Predition interval width
+
+```{r picp, results="asis"}
+pcip_mgcv <- res_mgcv %>% 
+  dplyr::filter(type == "validation") %>%
+  dplyr::mutate(
+    obs_in_pi = upper -lower
+   
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp =  picp
+  )
+
+
+pcip_cnn <- cnn_df %>% 
+  dplyr::filter(type == "Validation") %>%
+  dplyr::mutate(
+     obs_in_pi = upper -lower
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp = picp
+  )
+pcip_bs <- res_pls_bs %>% 
+  dplyr::filter(type == "validation") %>%
+  dplyr::mutate(
+     obs_in_pi = upper -lower
+  ) %>% 
+  dplyr::group_by(variable) %>% 
+  dplyr::summarise(
+    picp = sum(obs_in_pi) / n()
+  ) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(
+    picp = picp
+  )
+
+
+
+rbind(
+  data.frame(method = "GAM", pcip_mgcv),
+  data.frame(method = "Boostraped PLS", pcip_bs),
+   data.frame(method = "Bayesian CNN", pcip_cnn)
+  
+  
+) %>% 
+  tidyr::pivot_wider(
+    names_from = variable,
+    values_from = picp
+  ) %>% 
+  knitr::kable(
+    col.names = c("Method", "P Retention","Total Carbon", "Clay", "pH", "Sand", "Silt"),
+    caption = "Mean Prediction Interval Width (MPIW) for the different variables modelled, on the validation set. The target is a 90% prediction interval.",
+    digits = 1
+  )
+```
