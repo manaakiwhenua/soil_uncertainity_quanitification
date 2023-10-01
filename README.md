@@ -6,5 +6,8 @@ Run the R Markdown file in the "PLS_GAM_RMD" folder.
 
 All data and files are located in the X drive (X:\Lincoln\Smap-CovariateLayers\Spectroscopy_Modelling\).
 
+All derived model are available online here  https://dev-soil-models.landcareresearch.co.nz/v1_0/docs#/
+
+
 ## To Run the Bayesian Model 
 Run the python notebook for the individual soil properties 
