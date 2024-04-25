@@ -921,15 +921,21 @@ print(
 ## CNN Performance
 
 ```{r get_result, cache=FALSE}
-texture_df= read.csv(file.path(cnn_model_dir,"Mir","texture.csv"))
-carbon_df= read.csv(file.path(cnn_model_dir,"Mir","carbon.csv"))
-ph_df= read.csv(file.path(cnn_model_dir,"Mir","ph.csv"))
-pret_df= read.csv(file.path(cnn_model_dir,"Mir","pret.csv"))
+
+sand_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_sand.csv"))
+silt_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_silt.csv"))
+clay_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_clay.csv"))
+carbon_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_carbon.csv"))
+ph_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_ph.csv"))
+pret_df= read.csv(file.path(cnn_model_dir,"Mir","Results","cnn_prent4.csv"))
 
 #merge the csv 
-cnn_df <- merge(texture_df, carbon_df,  all = TRUE)
+cnn_df <- merge(silt_df, carbon_df,  all = TRUE)
 cnn_df <- merge(cnn_df, pret_df,  all = TRUE)
+cnn_df <- merge(cnn_df, clay_df,  all = TRUE)
+cnn_df <- merge(cnn_df, sand_df,  all = TRUE)
 cnn_df <- merge(cnn_df, ph_df,  all = TRUE)
+
 
 ```
 
@@ -2055,7 +2061,6 @@ pcip_bs <- res_pls_bs %>%
   dplyr::mutate(
     picp = 100 * picp
   )
-
 
 
 rbind(
